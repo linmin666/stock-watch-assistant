@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* 黑夜主题（默认）：金融终端深色 */
+  :root {
+    --c-base: 11 14 20; /* #0B0E14 */
+    --c-panel: 17 21 30; /* #11151E */
+    --c-edge: 30 36 48; /* #1E2430 */
+    --c-edgebright: 42 50 66; /* #2A3242 */
+    --c-ink: 232 236 243; /* #E8ECF3 */
+    --c-dim: 139 147 165; /* #8B93A5 */
+    --c-gold: 245 185 74; /* #F5B94A */
+    --c-cyan: 74 200 245; /* #4AC8F5 */
+    --c-up: 229 72 77; /* #E5484D 涨-红 */
+    --c-down: 61 214 140; /* #3DD68C 跌-绿 */
+    --c-ongold: 11 14 20; /* 金色按钮上的文字 */
+    color-scheme: dark;
+  }
+
+  /* 白天主题：浅色金融终端 */
+  html.light {
+    --c-base: 246 247 250; /* #F6F7FA */
+    --c-panel: 255 255 255; /* #FFFFFF */
+    --c-edge: 224 228 236; /* #E0E4EC */
+    --c-edgebright: 176 184 200; /* #B0B8C8 */
+    --c-ink: 24 30 42; /* #181E2A */
+    --c-dim: 110 120 140; /* #6E788C */
+    --c-gold: 200 138 10; /* #C88A0A 深金保证对比度 */
+    --c-cyan: 6 132 181; /* #0684B5 深青 */
+    --c-up: 214 50 56; /* #D63238 */
+    --c-down: 12 158 96; /* #0C9E60 */
+    --c-ongold: 255 255 255; /* 金色按钮上的文字 */
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-base text-ink font-sans antialiased;
+  }
+  ::selection {
+    @apply bg-gold/30;
+  }
+  input,
+  select {
+    @apply bg-panel border border-edge rounded px-3 py-2 text-sm text-ink outline-none transition-colors;
+  }
+  input:focus,
+  select:focus {
+    @apply border-gold/60;
+  }
+}
+
+@layer utilities {
+  /* 终端网格背景（跟随主题） */
+  .grid-bg {
+    background-image:
+      linear-gradient(rgb(var(--c-edge) / 0.4) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--c-edge) / 0.4) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .panel {
+    @apply bg-panel border border-edge;
+  }
+}
