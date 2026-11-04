@@ -17,6 +17,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import AddStockForm from '../components/AddStockForm'
+import IndexBar from '../components/IndexBar'
 import StockCard from '../components/StockCard'
 import { useQuotes, useStocks } from '../hooks/useData'
 import { api } from '../utils/api'
@@ -60,6 +61,8 @@ export default function Home() {
   const stocks = useStocks()
   const quotes = useQuotes()
   const [order, setOrder] = useState<string[] | null>(null) // 本地拖拽中的顺序覆盖
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshToken, setRefreshToken] = useState(0)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -71,8 +74,9 @@ export default function Home() {
   const fallbackQuote = (code: string, name: string): StockQuoteGroup => ({
     code,
     name,
-    error: '等待轮询…',
+    error: '数据加载中…',
     updatedAt: '',
+    dayChangePct: null,
     quotes: [],
   })
 
@@ -91,6 +95,20 @@ export default function Home() {
     setOrder(null)
     stocks.refresh()
     quotes.refresh()
+  }
+
+  /** 整页手动刷新：先让引擎立即轮询（指数 + 监控列表 K 线），再拉取最新快照 */
+  const refresh = async () => {
+    setRefreshing(true)
+    try {
+      await api.quotesRefresh()
+    } catch {
+      // 引擎刷新失败也不影响拉取现有快照
+    }
+    quotes.refresh()
+    stocks.refresh()
+    setRefreshToken((t) => t + 1) // 指数条同步重拉
+    setRefreshing(false)
   }
 
   const togglePin = async (code: string, pinned: boolean) => {
@@ -117,6 +135,8 @@ export default function Home() {
 
   return (
     <div>
+      <IndexBar onRefresh={refresh} refreshing={refreshing} refreshToken={refreshToken} />
+
       <AddStockForm stocks={stockList} onChanged={() => { setOrder(null); stocks.refresh() }} />
 
       {stocks.loading ? (

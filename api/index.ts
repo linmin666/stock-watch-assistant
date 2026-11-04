@@ -5,7 +5,7 @@ import type { AddStockRequest, PutSettingsRequest, TestNotifyRequest } from "../
 import * as db from "./db.js";
 import { guessMarket, fetchStockName } from "./eastmoney.js";
 import { sendTest } from "./notifier.js";
-import { getEngineStatus, getQuoteCache, startEngine, pollEtfPool } from "./engine.js";
+import { getEngineStatus, getQuoteCache, getIndices, startEngine, pollEtfPool, pollMonitorList } from "./engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -136,6 +136,16 @@ app.post("/api/engine/refresh", async (_req, res) => {
   }
 });
 
+// 手动刷新：立即轮询监控列表一轮（监控页刷新按钮用，不受交易时段限制）
+app.post("/api/quotes/refresh", async (_req, res) => {
+  try {
+    await pollMonitorList();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "轮询失败" });
+  }
+});
+
 // ---------- 实时快照（引擎轮询缓存，按周期） ----------
 app.get("/api/quotes", (_req, res) => {
   const cache = getQuoteCache();
@@ -144,8 +154,9 @@ app.get("/api/quotes", (_req, res) => {
     return {
       code: s.code,
       name: s.name,
-      error: c?.error ?? "等待引擎首次轮询…",
+      error: c ? c.error : "数据加载中…",
       updatedAt: c?.updatedAt ?? "",
+      dayChangePct: c?.dayChangePct ?? null,
       quotes: c ? [...c.byPeriod.values()] : [],
     };
   });
@@ -211,6 +222,12 @@ app.get("/api/etf-pool", (_req, res) => {
   });
 
   res.json({ ok: true, data });
+});
+
+// ---------- 指数行情（上证/深证/创业板/科创50） ----------
+app.get("/api/indices", (_req, res) => {
+  const { indices, error } = getIndices();
+  res.json({ ok: true, data: { indices, error } });
 });
 
 // ---------- 生产模式托管前端 ----------

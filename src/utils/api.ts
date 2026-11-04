@@ -50,9 +50,31 @@ export const api = {
       body: JSON.stringify({ channel, key }),
     }),
   engineStatus: () => request<EngineStatus>('/api/engine/status'),
-  /** 触发引擎立即轮询一轮 */
+  /** 触发引擎立即轮询一轮（ETF 池） */
   engineRefresh: () => request<void>('/api/engine/refresh', { method: 'POST' }),
+  /** 触发引擎立即轮询一轮（监控列表） */
+  quotesRefresh: () => request<void>('/api/quotes/refresh', { method: 'POST' }),
   quotes: () => request<StockQuoteGroup[]>('/api/quotes'),
+  /** 指数行情（上证/深证/创业板/科创50） */
+  indices: () => request<IndicesResponse>('/api/indices'),
+}
+
+/** 指数行情响应 */
+export interface IndicesResponse {
+  indices: IndexQuote[]
+  error: string | null
+}
+
+/** 单个指数快照（含各分钟周期 MA60 状态） */
+export interface IndexQuote {
+  code: string
+  name: string
+  price: number
+  change: number
+  changePct: number
+  updatedAt: string
+  /** 各分钟周期是否站上 MA60（key: "5" | "15" | "30"），数据不足为 null */
+  periods: Record<string, { above: boolean; price: number; ma60: number; pctFromMa60: number } | null>
 }
 
 export interface StockQuoteGroup {
@@ -60,6 +82,8 @@ export interface StockQuoteGroup {
   name: string
   error: string | null
   updatedAt: string
+  /** 当日涨跌幅 %（相对昨收），快照未就绪时为 null */
+  dayChangePct: number | null
   quotes: PeriodQuote[]
 }
 

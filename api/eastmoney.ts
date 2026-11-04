@@ -23,6 +23,11 @@ function sinaSymbol(code: string, market: Market): string {
   return `${market === "SH" ? "sh" : market === "BJ" ? "bj" : "sz"}${code}`;
 }
 
+/** 对外导出：拼新浪 symbol（引擎批量快照用） */
+export function sinaSymbolOf(code: string, market: Market): string {
+  return sinaSymbol(code, market);
+}
+
 /**
  * 过滤未收盘 K 线：新浪盘中会返回当前正在形成的K线（仅最后一根）。
  * 判断依据：bar 开始时间 + period > 当前时刻 → 未收盘，剔除。
@@ -91,43 +96,83 @@ async function fetchMinuteKlines(code: string, market: Market, period: Period, l
 }
 
 /**
- * 腾讯日/周 K 线（qfq 前复权）
- * param={symbol},{day|week},,,{limit},qfq
- * 返回格式：["2026-10-22","1.261","1.178","1.273","1.174",...]
+ * 新浪日/周 K 线
+ * scale: 240=日线, 1200=周线（新浪不支持自定义周期，240/1200 为其内置映射）
+ * 返回格式与分钟级一致：{"day":"2026-10-28","open":...,"close":...}
  */
 async function fetchDailyWeeklyKlines(code: string, market: Market, period: Period, limit: number): Promise<Kline[]> {
   const symbol = sinaSymbol(code, market);
-  const klt = period === 1440 ? "day" : "week";
+  const scale = period === 1440 ? 240 : 1200;
   const url =
-    `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get` +
-    `?param=${symbol},${klt},,,${limit},qfq`;
+    `https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_=/CN_MarketDataService.getKLineData` +
+    `?symbol=${symbol}&scale=${scale}&ma=no&datalen=${limit}`;
   const resp = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-      Referer: "https://gu.qq.com/",
+      Referer: "https://finance.sina.com.cn/",
     },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!resp.ok) throw new Error(`腾讯行情接口 HTTP ${resp.status}`);
-  const json = (await resp.json()) as {
-    data?: Record<string, Record<string, unknown>>;
-  };
-  const stockData = json.data?.[symbol];
-  if (!stockData) throw new Error("接口未返回K线数据");
-  const raw = (stockData[klt] ?? stockData.qfqday ?? stockData.qfqweek) as string[][] | undefined;
-  if (!Array.isArray(raw) || raw.length === 0) throw new Error("接口未返回K线数据");
-  const klines: Kline[] = raw.map((row) => {
-    // 格式：date,open,close,high,low,volume,...
-    return {
-      time: `${row[0]} 15:00`, // 日线/周线统一用 15:00 作为时间戳
-      open: Number(row[1]),
-      close: Number(row[2]),
-      high: Number(row[3]),
-      low: Number(row[4]),
-    };
-  });
+  if (!resp.ok) throw new Error(`新浪行情接口 HTTP ${resp.status}`);
+  const text = await resp.text();
+  // 响应为 JSONP：/*...*/ var _=([{...}]);
+  const start = text.indexOf("(");
+  const end = text.lastIndexOf(")");
+  if (start < 0 || end <= start) throw new Error("行情接口返回格式异常");
+  let arr: Array<{ day: string; open: string; close: string; high: string; low: string }>;
+  try {
+    arr = JSON.parse(text.slice(start + 1, end));
+  } catch {
+    throw new Error("行情接口返回解析失败");
+  }
+  if (!Array.isArray(arr) || arr.length === 0) throw new Error("接口未返回K线数据");
+  const klines: Kline[] = arr.map((k) => ({
+    time: `${k.day.slice(0, 10)} 15:00`, // 日线/周线统一用 15:00 作为时间戳
+    open: Number(k.open),
+    close: Number(k.close),
+    high: Number(k.high),
+    low: Number(k.low),
+  }));
   // 日线/周线返回的都是已收盘数据，无需 dropUnclosedBars
   return klines;
+}
+
+/** 实时快照：当日涨跌幅（相对昨收） */
+export interface RealtimeSnapshot {
+  price: number; // 最新价
+  prevClose: number; // 昨收
+  changePct: number; // 当日涨跌幅 %
+}
+
+/**
+ * 新浪实时快照（hq.sinajs.cn，GBK 编码），支持批量。
+ * 用于获取当日涨跌幅（K线接口的单根涨跌不等于当日涨跌）。
+ */
+export async function fetchRealtimeSnapshots(symbols: string[]): Promise<Map<string, RealtimeSnapshot>> {
+  const result = new Map<string, RealtimeSnapshot>();
+  if (symbols.length === 0) return result;
+  const url = `https://hq.sinajs.cn/list=${symbols.join(",")}`;
+  const resp = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Referer: "https://finance.sina.com.cn/",
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) throw new Error(`新浪快照接口 HTTP ${resp.status}`);
+  const buf = await resp.arrayBuffer();
+  const text = new TextDecoder("gbk").decode(buf);
+  // 格式：var hq_str_sh513050="名称,今开,昨收,最新,最高,最低,...";
+  for (const m of text.matchAll(/hq_str_(\w+)="([^"]*)"/g)) {
+    const [, symbol, body] = m;
+    if (!symbol || !body) continue;
+    const f = body.split(",");
+    const price = Number(f[3]);
+    const prevClose = Number(f[2]);
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(prevClose) || prevClose <= 0) continue;
+    result.set(symbol, { price, prevClose, changePct: ((price - prevClose) / prevClose) * 100 });
+  }
+  return result;
 }
 
 /** 新浪实时快照（名称解析，用于添加监控时校验代码），GBK 编码需转码 */

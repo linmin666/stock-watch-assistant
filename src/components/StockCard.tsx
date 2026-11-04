@@ -1,6 +1,6 @@
 import { Trash2, Pin, PinOff, GripVertical } from 'lucide-react'
 import type { StockQuoteGroup, PeriodQuote } from '../utils/api'
-import { formatDateTime, fmtPrice } from '../utils/format'
+import { fmtPrice, priceColor } from '../utils/format'
 
 // 监控卡片展示的周期（保持原有三周期）
 const CARD_PERIODS = [5, 15, 30] as const
@@ -79,8 +79,16 @@ export default function StockCard({ quote, onRemove, onTogglePin, pinned, dragHa
       </div>
 
       {price != null ? (
-        <div className="font-mono text-3xl font-semibold tracking-tight text-up tabular-nums">
-          {fmtPrice(price)}
+        <div className="flex items-baseline gap-3">
+          <span className={`font-mono text-3xl font-semibold tracking-tight tabular-nums ${quote.dayChangePct != null ? priceColor(quote.dayChangePct) : 'text-ink'}`}>
+            {fmtPrice(price)}
+          </span>
+          {quote.dayChangePct != null && (
+            <span className={`font-mono text-lg font-bold ${priceColor(quote.dayChangePct)}`}>
+              {quote.dayChangePct >= 0 ? '+' : ''}
+              {quote.dayChangePct.toFixed(2)}%
+            </span>
+          )}
         </div>
       ) : (
         <div className="py-1 text-xs text-dim">{quote.error ?? '等待数据…'}</div>
@@ -96,14 +104,10 @@ export default function StockCard({ quote, onRemove, onTogglePin, pinned, dragHa
               <span className="w-9 shrink-0 border-r border-edge/60 pr-2 text-right font-mono text-[11px] font-bold text-gold">
                 {p}分
               </span>
-              <span className="text-[11px] text-dim/80">{quote.error ?? '等待引擎轮询…'}</span>
+              <span className="text-[11px] text-dim/80">{quote.error ?? '该周期暂无数据'}</span>
             </div>
           )
         })}
-      </div>
-
-      <div className="mt-2 border-t border-edge pt-2 font-mono text-[10px] text-dim/70">
-        更新于 {formatDateTime(quote.updatedAt)}
       </div>
     </div>
   )

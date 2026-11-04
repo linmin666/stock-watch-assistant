@@ -25,8 +25,9 @@ CREATE TABLE IF NOT EXISTS signals (
   stock_code TEXT NOT NULL REFERENCES stocks(code) ON DELETE CASCADE,
   stock_name TEXT NOT NULL,
   period     INTEGER NOT NULL DEFAULT 5 CHECK (period IN (5,15,30,60,1440,10080)),
-  type       TEXT NOT NULL CHECK (type IN ('golden_cross','breakout')),
+  type       TEXT NOT NULL CHECK (type IN ('golden_cross','breakout','day_surge','day_plunge')),
   price      REAL NOT NULL,
+  change_pct REAL,
   ma30       REAL NOT NULL,
   ma60       REAL NOT NULL,
   kline_time TEXT NOT NULL,
@@ -66,10 +67,15 @@ CREATE TABLE IF NOT EXISTS etf_pool (
   }
 }
 
-// 旧库迁移：扩展 signals 表 period 约束以支持 60/1440/10080
+// 旧库迁移：扩展 signals 表 period 约束以支持 60/1440/10080，或补充 day_surge 类型 / change_pct 列
 {
   const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='signals'").get() as { sql: string } | undefined;
-  if (tableInfo && tableInfo.sql.includes("CHECK (period IN (5,15,30))")) {
+  const needRebuild =
+    tableInfo &&
+    (tableInfo.sql.includes("CHECK (period IN (5,15,30))") ||
+      !tableInfo.sql.includes("day_plunge") ||
+      !tableInfo.sql.includes("change_pct"));
+  if (needRebuild) {
     db.exec(`
       DROP TABLE IF EXISTS signals_new;
       CREATE TABLE signals_new (
@@ -77,8 +83,9 @@ CREATE TABLE IF NOT EXISTS etf_pool (
         stock_code TEXT NOT NULL REFERENCES stocks(code) ON DELETE CASCADE,
         stock_name TEXT NOT NULL,
         period     INTEGER NOT NULL DEFAULT 5 CHECK (period IN (5,15,30,60,1440,10080)),
-        type       TEXT NOT NULL CHECK (type IN ('golden_cross','breakout')),
+        type       TEXT NOT NULL CHECK (type IN ('golden_cross','breakout','day_surge','day_plunge')),
         price      REAL NOT NULL,
+        change_pct REAL,
         ma30       REAL NOT NULL,
         ma60       REAL NOT NULL,
         kline_time TEXT NOT NULL,
@@ -86,8 +93,8 @@ CREATE TABLE IF NOT EXISTS etf_pool (
         notified   INTEGER NOT NULL DEFAULT 0
       );
       -- 显式按列名插入，避免旧库 ALTER TABLE 追加列导致物理列顺序不一致
-      INSERT INTO signals_new (id, stock_code, stock_name, period, type, price, ma30, ma60, kline_time, created_at, notified)
-        SELECT id, stock_code, stock_name, period, type, price, ma30, ma60, kline_time, created_at, notified FROM signals;
+      INSERT INTO signals_new (id, stock_code, stock_name, period, type, price, change_pct, ma30, ma60, kline_time, created_at, notified)
+        SELECT id, stock_code, stock_name, period, type, price, NULL, ma30, ma60, kline_time, created_at, notified FROM signals;
       DROP TABLE signals;
       ALTER TABLE signals_new RENAME TO signals;
       CREATE INDEX IF NOT EXISTS idx_signals_created ON signals (created_at DESC);
@@ -119,6 +126,7 @@ type SignalRow = {
   period: number;
   type: string;
   price: number;
+  change_pct: number | null;
   ma30: number;
   ma60: number;
   kline_time: string;
@@ -141,12 +149,12 @@ const stmts = {
   updateOrder: db.prepare<[number, string]>("UPDATE stocks SET sort_order = ? WHERE code = ?"),
   setPinned: db.prepare<[number, string]>("UPDATE stocks SET pinned = ? WHERE code = ?"),
   maxSort: db.prepare<[], { max: number | null }>("SELECT MAX(sort_order) AS max FROM stocks"),
-  insertSignal: db.prepare<[string, string, number, string, number, number, number, string]>(
-    `INSERT OR IGNORE INTO signals (stock_code, stock_name, period, type, price, ma30, ma60, kline_time)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  insertSignal: db.prepare<[string, string, number, string, number, number | null, number, number, string]>(
+    `INSERT OR IGNORE INTO signals (stock_code, stock_name, period, type, price, change_pct, ma30, ma60, kline_time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ),
   unnotifiedSignals: db.prepare<[], SignalRow>(
-    "SELECT id, stock_code, stock_name, period, type, price, ma30, ma60, kline_time FROM signals WHERE notified = 0 ORDER BY id ASC"
+    "SELECT id, stock_code, stock_name, period, type, price, change_pct, ma30, ma60, kline_time FROM signals WHERE notified = 0 ORDER BY id ASC"
   ),
   markNotified: db.prepare<[number]>("UPDATE signals SET notified = 1 WHERE id = ?"),
   listSignals: db.prepare<[number], SignalRow>(
@@ -221,7 +229,7 @@ export function deleteStock(code: string): void {
  * 写入信号（幂等，重复返回 false）
  */
 export function insertSignal(s: Omit<Signal, "id" | "createdAt" | "notified">): boolean {
-  const r = stmts.insertSignal.run(s.stockCode, s.stockName, s.period, s.type, s.price, s.ma30, s.ma60, s.klineTime);
+  const r = stmts.insertSignal.run(s.stockCode, s.stockName, s.period, s.type, s.price, s.changePct ?? null, s.ma30, s.ma60, s.klineTime);
   return r.changes > 0;
 }
 
@@ -233,6 +241,7 @@ export function getUnnotifiedSignals(): Signal[] {
     period: r.period as Period,
     type: r.type as SignalType,
     price: r.price,
+    changePct: r.change_pct ?? undefined,
     ma30: r.ma30,
     ma60: r.ma60,
     klineTime: r.kline_time,
@@ -253,6 +262,7 @@ export function listSignals(limit = 200): Signal[] {
     period: r.period as Period,
     type: r.type as SignalType,
     price: r.price,
+    changePct: r.change_pct ?? undefined,
     ma30: r.ma30,
     ma60: r.ma60,
     klineTime: r.kline_time,

@@ -28,18 +28,19 @@ export const PERIOD_LABELS: Record<Period, string> = {
 /** 排序优先级（高→低）：周 > 日 > 时 > 30分 > 15分 > 5分 */
 export const PERIOD_PRIORITY: Period[] = [10080, 1440, 60, 30, 15, 5];
 
-export type SignalType = "golden_cross" | "breakout";
+export type SignalType = "golden_cross" | "breakout" | "day_surge" | "day_plunge";
 
 export interface Signal {
   id: number;
   stockCode: string;
   stockName: string;
   period: Period; // K线周期
-  type: SignalType; // golden_cross=金叉, breakout=突破
-  price: number; // 触发时收盘价
+  type: SignalType; // golden_cross=金叉, breakout=突破, day_surge=当日涨幅超7%, day_plunge=当日跌幅超6%
+  price: number; // 触发时收盘价（day_surge 为实时价）
+  changePct?: number; // day_surge 专用：当日涨幅 %
   ma30: number;
   ma60: number;
-  klineTime: string; // 触发的K线时间（已收盘）
+  klineTime: string; // 触发的K线时间（已收盘；day_surge 为日期 YYYY-MM-DD，每日去重）
   createdAt: string; // 检测到信号的时间
   notified: 0 | 1; // 是否已推送
 }

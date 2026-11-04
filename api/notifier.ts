@@ -7,13 +7,23 @@ export interface NotifyResult {
 
 function formatSignalBody(signals: Signal[]): string {
   const lines = signals.map((s) => {
-    const typeText = s.type === "golden_cross" ? "⭐ 均线金叉" : "🚀 突破60均线";
+    let typeText: string;
+    let detail: string;
+    if (s.type === "day_surge" || s.type === "day_plunge") {
+      const up = s.type === "day_surge";
+      typeText = up ? "🔥 当日涨幅超7%" : "⚠️ 当日跌幅超6%";
+      detail = `当前涨跌：<b style="color:#e5484d;">${(s.changePct ?? 0) >= 0 ? "+" : ""}${(s.changePct ?? 0).toFixed(2)}%</b> ｜ 现价：<b style="color:#e5484d;">${s.price.toFixed(3)}</b>`;
+    } else {
+      typeText = s.type === "golden_cross" ? "⭐ 均线金叉" : "🚀 突破60均线";
+      detail =
+        `触发价：<b style="color:#e5484d;">${s.price.toFixed(3)}</b> ｜ ` +
+        `MA30：${s.ma30.toFixed(3)} ｜ MA60：${s.ma60.toFixed(3)}`;
+    }
     return (
       `<div style="margin:8px 0;padding:10px 12px;background:#f7f8fa;border-left:3px solid #F5B94A;border-radius:4px;">` +
-      `<b>${s.stockName}</b>（${s.stockCode}） ${s.period}分钟K线 ${typeText}<br/>` +
+      `<b>${s.stockName}</b>（${s.stockCode}）${s.type === "day_surge" ? "" : ` ${s.period}分钟K线`} ${typeText}<br/>` +
       `<span style="color:#888;font-size:13px;">` +
-      `触发价：<b style="color:#e5484d;">${s.price.toFixed(3)}</b> ｜ ` +
-      `MA30：${s.ma30.toFixed(3)} ｜ MA60：${s.ma60.toFixed(3)}<br/>` +
+      `${detail}<br/>` +
       `K线时间：${s.klineTime}</span></div>`
     );
   });
@@ -22,12 +32,17 @@ function formatSignalBody(signals: Signal[]): string {
 
 function buildContent(signals: Signal[]): { title: string; body: string } {
   const names = [...new Set(signals.map((s) => s.stockName))].join("、");
-  const periods = [...new Set(signals.map((s) => s.period))].sort((a, b) => a - b).join("/");
+  const hasSurge = signals.some((s) => s.type === "day_surge" || s.type === "day_plunge");
   const hasGC = signals.some((s) => s.type === "golden_cross");
-  const tags = [hasGC ? "金叉" : null, signals.some((s) => s.type === "breakout") ? "突破" : null]
+  const tags = [
+    signals.some((s) => s.type === "day_surge") ? "涨幅超7%" : null,
+    signals.some((s) => s.type === "day_plunge") ? "跌幅超6%" : null,
+    hasGC ? "金叉" : null,
+    signals.some((s) => s.type === "breakout") ? "突破" : null,
+  ]
     .filter(Boolean)
     .join("+");
-  const title = `${hasGC ? "⭐" : "🚀"} ${names} ${periods}分钟${tags}信号`;
+  const title = `${hasSurge ? (signals.some((s) => s.type === "day_plunge") ? "⚠️" : "🔥") : hasGC ? "⭐" : "🚀"} ${names} ${tags}信号`;
   const body = formatSignalBody(signals);
   return { title, body };
 }
