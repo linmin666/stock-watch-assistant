@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { Activity, Database, Settings2, Zap } from 'lucide-react'
+import { Activity, Database, Flame, Settings2, Zap } from 'lucide-react'
 import { useEngine } from '../hooks/useData'
 import ThemeToggle from './ThemeToggle'
 import { useEffect, useState } from 'react'
@@ -31,6 +31,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const tabs = [
     { to: '/', label: '监控', icon: Activity },
     { to: '/etf', label: 'ETF 池', icon: Database },
+    { to: '/sectors', label: '板块', icon: Flame },
     { to: '/settings', label: '设置', icon: Settings2 },
   ]
 

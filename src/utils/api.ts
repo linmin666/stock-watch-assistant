@@ -57,6 +57,50 @@ export const api = {
   quotes: () => request<StockQuoteGroup[]>('/api/quotes'),
   /** 指数行情（上证/深证/创业板/科创50） */
   indices: () => request<IndicesResponse>('/api/indices'),
+  /** 板块热点（东方财富，多周期涨幅） */
+  sectors: () => request<SectorsResponse>('/api/sectors'),
+  /** 查询股票所属板块（与板块热榜求交集高亮用） */
+  stockSectors: (code: string) =>
+    request<StockSectorLookup>(`/api/sectors/lookup/${code}`),
+}
+
+/** 股票所属板块查询结果 */
+export interface StockSectorLookup {
+  stockCode: string
+  stockName: string
+  /** 股票所属的板块列表（东财行业分类） */
+  sectors: Array<{ code: string; name: string }>
+}
+
+/** 板块热点响应 */
+export interface SectorsResponse {
+  sectors: SectorHot[]
+  error: string | null
+  updatedAt: string
+}
+
+/** 单个板块行情（含多周期涨幅与领涨股） */
+export interface SectorHot {
+  code: string
+  name: string
+  /** 当日涨幅 % */
+  changePct: number
+  /** 近一周涨幅 %（5日） */
+  weekPct: number
+  /** 近两周涨幅 %（10日） */
+  twoWeekPct: number
+  /** 近一月涨幅 %（20日） */
+  monthPct: number
+  upCount: number
+  downCount: number
+  leaderName: string
+  leaderCode: string
+  leaderPct: number
+  index: number
+  /** 主力资金净流入额（元），负数为净流出 */
+  mainInflow: number
+  /** 主力净流入占比 %（净流入/成交额） */
+  mainInflowPct: number
 }
 
 /** 指数行情响应 */

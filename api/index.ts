@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url";
 import type { AddStockRequest, PutSettingsRequest, TestNotifyRequest } from "../shared/types.js";
 import * as db from "./db.js";
 import { guessMarket, fetchStockName } from "./eastmoney.js";
+import { fetchStockSectors } from "./sectors.js";
 import { sendTest } from "./notifier.js";
-import { getEngineStatus, getQuoteCache, getIndices, startEngine, pollEtfPool, pollMonitorList } from "./engine.js";
+import { getEngineStatus, getQuoteCache, getIndices, getSectorHot, startEngine, pollEtfPool, pollMonitorList } from "./engine.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -228,6 +229,31 @@ app.get("/api/etf-pool", (_req, res) => {
 app.get("/api/indices", (_req, res) => {
   const { indices, error } = getIndices();
   res.json({ ok: true, data: { indices, error } });
+});
+
+// ---------- 板块热点（行业板块多周期涨幅 Top） ----------
+app.get("/api/sectors", (_req, res) => {
+  const { sectors, error, updatedAt } = getSectorHot();
+  res.json({ ok: true, data: { sectors, error, updatedAt } });
+});
+
+// 股票所属板块查询（用于与板块热榜求交集高亮；支持 6 位代码或股票名称）
+app.get("/api/sectors/lookup/:input", async (req, res) => {
+  const input = (req.params.input ?? "").trim();
+  if (!/^\d{6}$/.test(input) && input.length === 0) {
+    res.status(400).json({ ok: false, error: "请输入股票代码或名称" });
+    return;
+  }
+  if (input.length > 12) {
+    res.status(400).json({ ok: false, error: "名称过长" });
+    return;
+  }
+  try {
+    const lookup = await fetchStockSectors(input);
+    res.json({ ok: true, data: lookup });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "查询失败" });
+  }
 });
 
 // ---------- 生产模式托管前端 ----------

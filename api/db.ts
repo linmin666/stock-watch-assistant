@@ -233,6 +233,19 @@ export function insertSignal(s: Omit<Signal, "id" | "createdAt" | "notified">): 
   return r.changes > 0;
 }
 
+/**
+ * 推送冷却检查：该股票该策略在 cooldownMinutes 分钟内是否已有信号记录
+ * 基于 signals 表判断，服务重启后冷却依然生效
+ */
+export function hasRecentSignal(stockCode: string, type: SignalType, cooldownMinutes: number): boolean {
+  const stmt = db.prepare<[string, string], { cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM signals
+     WHERE stock_code = ? AND type = ?
+       AND created_at > datetime('now','localtime','-${cooldownMinutes} minutes')`
+  );
+  return (stmt.get(stockCode, type)?.cnt ?? 0) > 0;
+}
+
 export function getUnnotifiedSignals(): Signal[] {
   return stmts.unnotifiedSignals.all().map((r) => ({
     id: r.id,

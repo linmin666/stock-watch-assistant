@@ -5,6 +5,7 @@ import { sendSignals } from "./notifier.js";
 import { getSettings } from "./db.js";
 import { tradingPhase } from "./trading-time.js";
 import { fetchIndices, type IndexQuote } from "./indices.js";
+import { fetchSectorHot, type SectorHot } from "./sectors.js";
 import { PERIODS, type EngineStatus, type Period, type Quote, type SignalType } from "../shared/types.js";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -60,6 +61,26 @@ export function getIndices(): { indices: IndexQuote[]; error: string | null } {
   return { indices: indexCache, error: indexError };
 }
 
+/** 板块热点缓存（含拉取时间，供页面展示新鲜度） */
+let sectorCache: SectorHot[] = [];
+let sectorError: string | null = null;
+let sectorUpdatedAt: string = "";
+
+/** 拉取板块热点并更新缓存（失败保留旧数据） */
+export async function refreshSectorHot(): Promise<void> {
+  try {
+    sectorCache = await fetchSectorHot();
+    sectorError = null;
+    sectorUpdatedAt = new Date().toISOString();
+  } catch (err) {
+    sectorError = err instanceof Error ? err.message : String(err);
+  }
+}
+
+export function getSectorHot(): { sectors: SectorHot[]; error: string | null; updatedAt: string } {
+  return { sectors: sectorCache, error: sectorError, updatedAt: sectorUpdatedAt };
+}
+
 function log(msg: string): void {
   console.log(`[engine] ${new Date().toLocaleTimeString("zh-CN", { timeZone: "Asia/Shanghai" })} ${msg}`);
 }
@@ -79,9 +100,8 @@ async function retryUnnotified(): Promise<void> {
 const DAY_SURGE_THRESHOLD = 7;
 /** 当日跌幅推送阈值（%） */
 const DAY_PLUNGE_THRESHOLD = -6;
-
-/** 记录当天已触发过当日涨跌推送的股票（代码 -> `${日期}:${type}`），每天每类型最多推送一次 */
-const dayMoveFired = new Map<string, Set<string>>();
+/** 推送冷却时间（分钟）：同一股票同一策略在此窗口内最多推送一次 */
+const NOTIFY_COOLDOWN_MIN = 30;
 
 function todayStr(): string {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" }); // YYYY-MM-DD
@@ -127,7 +147,7 @@ async function checkStockPeriod(code: string, name: string, market: string, peri
     if (!(detection.goldenCross || detection.breakout)) return;
 
     const inserted: string[] = [];
-    if (detection.goldenCross) {
+    if (detection.goldenCross && !db.hasRecentSignal(code, "golden_cross", NOTIFY_COOLDOWN_MIN)) {
       const ok = db.insertSignal({
         stockCode: code,
         stockName: name,
@@ -140,7 +160,7 @@ async function checkStockPeriod(code: string, name: string, market: string, peri
       });
       if (ok) inserted.push("golden_cross");
     }
-    if (detection.breakout) {
+    if (detection.breakout && !db.hasRecentSignal(code, "breakout", NOTIFY_COOLDOWN_MIN)) {
       const ok = db.insertSignal({
         stockCode: code,
         stockName: name,
@@ -169,7 +189,8 @@ async function checkStockPeriod(code: string, name: string, market: string, peri
 }
 
 /**
- * 策略1/策略3：当日涨幅 > 7% 或跌幅 < -6% 时推送（每天每只股票每类最多一次）
+ * 策略1/策略3：当日涨幅 > 7% 或跌幅 < -6% 时推送
+ * 同一股票同一策略半小时内最多推送一次（NOTIFY_COOLDOWN_MIN）
  * 依赖 refreshDayChangePct 先行更新缓存。
  */
 async function checkDaySurge(stocks: { code: string; name: string }[]): Promise<void> {
@@ -183,12 +204,9 @@ async function checkDaySurge(stocks: { code: string; name: string }[]): Promise<
     if (pct < DAY_PLUNGE_THRESHOLD) types.push("day_plunge");
     if (types.length === 0) continue;
 
-    let fired = dayMoveFired.get(s.code);
-    if (!fired || fired.size === 0 || !fired.has(today)) fired = new Set([today]);
-    const newTypes = types.filter((t) => !fired!.has(t));
-    if (newTypes.length === 0) continue; // 今日该类已推送过
-    newTypes.forEach((t) => fired!.add(t));
-    dayMoveFired.set(s.code, fired);
+    // 半小时冷却：该股票该策略在冷却窗口内已推送过则跳过
+    const newTypes = types.filter((t) => !db.hasRecentSignal(s.code, t, NOTIFY_COOLDOWN_MIN));
+    if (newTypes.length === 0) continue;
 
     for (const type of newTypes) {
       const ok = db.insertSignal({
@@ -239,6 +257,8 @@ async function runOnce(): Promise<void> {
   const phase = tradingPhase();
   // 指数行情轻量，每轮都刷新（与个股监控同频）
   refreshIndices().catch(() => {});
+  // 板块热点每轮刷新（单次请求，开销小）
+  refreshSectorHot().catch(() => {});
   const stocks = db.listStocks();
   if (stocks.length === 0) return;
 
@@ -259,6 +279,10 @@ export function startEngine(): void {
   }, POLL_INTERVAL_MS);
   // 启动时立即拉取一轮（不受交易时段限制），避免收盘期间页面一直显示"等待引擎首次轮询"
   pollMonitorList().catch((err) => log(`启动首次轮询异常：${err instanceof Error ? err.message : String(err)}`));
+  // 启动时同步拉一次板块热点，保证板块页首屏有数据
+  refreshSectorHot()
+    .then(() => log(`板块热点已加载：${sectorCache.length} 个板块`))
+    .catch(() => {});
   log(`监控引擎已启动，轮询间隔 ${POLL_INTERVAL_MS / 1000}s，周期 ${PERIODS.join("/")}分钟（仅开盘时段轮询）`);
 }
 
@@ -296,8 +320,9 @@ export async function pollEtfPool(): Promise<void> {
 /** 立即轮询监控列表一轮（供监控页手动刷新，不受交易时段限制），完成后返回 */
 export async function pollMonitorList(): Promise<void> {
   const stocks = db.listStocks();
-  // 手动刷新时同步刷新指数
+  // 手动刷新时同步刷新指数与板块热点
   refreshIndices().catch(() => {});
+  refreshSectorHot().catch(() => {});
   if (stocks.length === 0) return;
   log(`手动刷新监控列表：${stocks.length} 只 × ${PERIODS.length} 个周期`);
   await pollStocks(stocks);
